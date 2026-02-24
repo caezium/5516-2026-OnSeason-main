@@ -263,7 +263,7 @@ public class Arm extends SubsystemBase {
     }
 
     public Command intakeCommand() {
-        return run(() -> io.setIntakeMotorOutput(INTAKE_VOLTAGE));
+        return run(() -> io.setIntakeMotorVelocity(INTAKE_VELOCITY));
     }
 
     public Command intakeIdleCommand() {

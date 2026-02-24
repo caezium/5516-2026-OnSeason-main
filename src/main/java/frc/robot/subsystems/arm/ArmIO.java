@@ -87,4 +87,6 @@ public interface ArmIO {
     default void setIntakeMotorOutput(Voltage voltage) {}
 
     default void setIntakeMotorBrake(boolean brakeModeEnable) {}
+
+    default void setIntakeMotorVelocity(double rpm) {}
 }

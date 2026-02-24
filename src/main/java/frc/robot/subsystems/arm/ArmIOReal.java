@@ -9,6 +9,7 @@ import com.ctre.phoenix6.StatusSignal;
 import com.ctre.phoenix6.configs.CurrentLimitsConfigs;
 import com.ctre.phoenix6.configs.MagnetSensorConfigs;
 import com.ctre.phoenix6.configs.MotorOutputConfigs;
+import com.ctre.phoenix6.controls.VelocityVoltage;
 import com.ctre.phoenix6.controls.VoltageOut;
 import com.ctre.phoenix6.hardware.CANcoder;
 import com.ctre.phoenix6.hardware.TalonFX;
@@ -39,6 +40,8 @@ public class ArmIOReal implements ArmIO {
     private final TalonFX intakeTalon;
     //     private final DutyCycleEncoder absoluteEncoder;
     private final CANcoder absoluteEncoder;
+
+    private final VelocityVoltage intakeVelocityRequest = new VelocityVoltage(0);
 
     // CTRE Motor Signals
     private final StatusSignal<Angle> absoluteEncoderAngle;
@@ -171,5 +174,12 @@ public class ArmIOReal implements ArmIO {
     public void setIntakeMotorBrake(boolean brakeModeEnable) {
         NeutralModeValue value = brakeModeEnable ? NeutralModeValue.Brake : NeutralModeValue.Coast;
         intakeTalon.setNeutralMode(value, 0.1);
+    }
+
+    @Override
+    public void setIntakeMotorVelocity(double rpm) {
+        double rps = rpm / 60.0;
+        intakeVelocityRequest.withVelocity(rps);
+        intakeTalon.setControl(intakeVelocityRequest);
     }
 }

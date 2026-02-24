@@ -186,7 +186,7 @@ public class RobotContainer {
         controller
                 .startShooterMotorButton()
                 .onTrue(shooter.runShooterVelocity(shooterVelocitySupplier))
-                .onFalse(shooter.runShooterVelocity(0.0));
+                .onFalse(shooter.runShooter(0.0));
 
         controller
                 .startFeederToShootButton()
@@ -200,7 +200,7 @@ public class RobotContainer {
                         () -> controller.translationalAxisY().getAsDouble(),
                         () -> controller.translationalAxisX().getAsDouble()));
 
-        controller.intakeButton().whileTrue(arm.intakeCommand());
+        controller.intakeButton().whileTrue(arm.intakeCommand()).whileFalse(arm.intakeIdleCommand());
 
         viceController.leftBumper().onTrue(arm.armDroppingCommand());
         viceController.rightBumper().onTrue(arm.armUprightCommand());
