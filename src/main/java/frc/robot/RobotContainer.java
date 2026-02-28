@@ -27,6 +27,7 @@ import edu.wpi.first.wpilibj2.command.Commands;
 import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
 import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine;
 import frc.robot.commands.DriveCommands;
+import frc.robot.commands.drive.HubAlignmentCommands;
 import frc.robot.generated.TunerConstants;
 import frc.robot.subsystems.arm.Arm;
 import frc.robot.subsystems.arm.ArmIOReal;
@@ -56,7 +57,7 @@ public class RobotContainer {
 
     // Controller
     //     private final CommandXboxController controller = new CommandXboxController(0);
-    public final DriverMap controller = new DriverMap.RightHandedXbox(0);
+    public final DriverMap controller = new DriverMap.LeftHandedXbox(0);
     public final CommandXboxController viceController = new CommandXboxController(1);
 
     // Dashboard inputs
@@ -78,6 +79,7 @@ public class RobotContainer {
                         drive,
                         new VisionIOLimelight(VisionConstants.camera0Name, drive::getRotation),
                         new VisionIOLimelight(VisionConstants.camera1Name, drive::getRotation));
+                arm = new Arm(new ArmIOReal());
                 break;
 
             case SIM:
@@ -181,8 +183,8 @@ public class RobotContainer {
                 : () -> drive.resetOdometry(new Pose2d(drive.getPose().getTranslation(), new Rotation2d()));
         // controller.start().onTrue(Commands.runOnce(resetOdometry).ignoringDisable(true));
         controller.resetOdometryButton().onTrue(Commands.runOnce(resetOdometry).ignoringDisable(true));
-        SmartDashboard.putNumber("Shooter Velocity (RPM)", -3000.0);
-        DoubleSupplier shooterVelocitySupplier = () -> SmartDashboard.getNumber("Shooter Velocity (RPM)", -3000.0);
+        SmartDashboard.putNumber("Shooter Velocity (RPM)", -2800.0);
+        DoubleSupplier shooterVelocitySupplier = () -> SmartDashboard.getNumber("Shooter Velocity (RPM)", -2800.0);
         controller
                 .startShooterMotorButton()
                 .onTrue(shooter.runShooterVelocity(shooterVelocitySupplier))
@@ -192,13 +194,15 @@ public class RobotContainer {
                 .startFeederToShootButton()
                 .whileTrue(shooter.runFeederVelocity(2000).alongWith(arm.intakeCommand()))
                 .whileFalse(shooter.runFeederVelocity(0.0).alongWith(arm.intakeIdleCommand()));
-        // Auto-aiming binding
+        // Auto-aiming binding with vision (uses AprilTag detection)
         controller
                 .autoAlignToHubButton()
-                .whileTrue(DriveCommands.autoAim(
+                .whileTrue(HubAlignmentCommands.aimAtHubWithVision(
                         drive,
+                        vision,
                         () -> controller.translationalAxisY().getAsDouble(),
-                        () -> controller.translationalAxisX().getAsDouble()));
+                        () -> controller.translationalAxisX().getAsDouble(),
+                        DriveCommands.BLUE_TARGET_POSITION));
 
         controller.intakeButton().whileTrue(arm.intakeCommand()).whileFalse(arm.intakeIdleCommand());
 
