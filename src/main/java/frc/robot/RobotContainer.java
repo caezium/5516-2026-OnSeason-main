@@ -187,8 +187,8 @@ public class RobotContainer {
         DoubleSupplier shooterVelocitySupplier = () -> SmartDashboard.getNumber("Shooter Velocity (RPM)", -2800.0);
         controller
                 .startShooterMotorButton()
-                .onTrue(shooter.runShooterVelocity(shooterVelocitySupplier))
-                .onFalse(shooter.runShooter(0.0));
+                .onTrue(shooter.runShooterWithSubshooter(shooterVelocitySupplier))
+                .onFalse(shooter.runShooterWithSubshooter(0.0));
 
         controller
                 .startFeederToShootButton()
