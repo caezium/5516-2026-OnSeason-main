@@ -12,8 +12,8 @@ public final class ArmConstants {
 
     public static final Current INTAKE_CURRENT_LIMIT = Amps.of(30);
     public static final Voltage INTAKE_MAX_VOLTAGE = Volts.of(23.0);
-    public static final Voltage INTAKE_VOLTAGE = Volts.of(14.0);
-    public static final double INTAKE_VELOCITY = 7500;
+    public static final Voltage INTAKE_VOLTAGE = Volts.of(6.8);
+    public static final double INTAKE_VELOCITY = 1000;
     // The setpoint angle for arm to intake from ground
     public static final Angle ARM_STARTING_ANGLE = Degrees.of(140); // upper
     public static final Angle ARM_INTAKING_ANGLE = Degrees.of(10); // lower
