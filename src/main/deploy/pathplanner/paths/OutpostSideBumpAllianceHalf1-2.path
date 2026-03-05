@@ -3,32 +3,37 @@
   "waypoints": [
     {
       "anchor": {
-        "x": 3.5623578595317724,
-        "y": 5.149581939799332
+        "x": 3.531244537870763,
+        "y": 2.0252083333333335
       },
       "prevControl": null,
       "nextControl": {
-        "x": 5.080242474916388,
-        "y": 5.222909698996656
+        "x": 4.309010558023975,
+        "y": 2.3573925243296405
       },
       "isLocked": false,
       "linkedName": null
     },
     {
       "anchor": {
-        "x": 6.451471571906354,
-        "y": 5.98551839464883
+        "x": 0.48307341322670216,
+        "y": 0.6676215461654784
       },
       "prevControl": {
-        "x": 6.121496655518396,
-        "y": 5.090919732441472
+        "x": -0.03569703994818685,
+        "y": 0.5043125381753688
       },
       "nextControl": null,
       "isLocked": false,
       "linkedName": null
     }
   ],
-  "rotationTargets": [],
+  "rotationTargets": [
+    {
+      "waypointRelativePos": 1.0,
+      "rotationDegrees": 180.0
+    }
+  ],
   "constraintZones": [],
   "pointTowardsZones": [],
   "eventMarkers": [],
@@ -42,10 +47,10 @@
   },
   "goalEndState": {
     "velocity": 0,
-    "rotation": -2.174744114609978
+    "rotation": 180.0
   },
   "reversed": false,
-  "folder": null,
+  "folder": "OutpostSideBumpAllianceHalf",
   "idealStartingState": {
     "velocity": 0,
     "rotation": 0.0
