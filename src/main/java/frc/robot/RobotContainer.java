@@ -32,6 +32,9 @@ import frc.robot.commands.drive.HubAlignmentCommands;
 import frc.robot.generated.TunerConstants;
 import frc.robot.subsystems.arm.Arm;
 import frc.robot.subsystems.arm.ArmIOReal;
+import frc.robot.subsystems.climb.Climb;
+import frc.robot.subsystems.climb.ClimbIO;
+import frc.robot.subsystems.climb.ClimbIOReal;
 import frc.robot.subsystems.drive.*;
 import frc.robot.subsystems.shooter.Shooter;
 import frc.robot.subsystems.shooter.ShooterIOReal;
@@ -55,6 +58,7 @@ public class RobotContainer {
 
     public Shooter shooter;
     public Arm arm;
+    public Climb climb;
 
     // Controller
     //     private final CommandXboxController controller = new CommandXboxController(0);
@@ -79,8 +83,9 @@ public class RobotContainer {
                 vision = new Vision(
                         drive,
                         new VisionIOPhotonVision(VisionConstants.camera0Name, VisionConstants.robotToCamera0),
-                        new VisionIOPhotonVision(VisionConstants.camera1Name, VisionConstants.robotToCamera1));                   
+                        new VisionIOPhotonVision(VisionConstants.camera1Name, VisionConstants.robotToCamera1));
                 arm = new Arm(new ArmIOReal());
+                climb = new Climb(new ClimbIOReal());
                 break;
 
             case SIM:
@@ -102,6 +107,10 @@ public class RobotContainer {
                                 camera0Name, robotToCamera0, driveSimulation::getSimulatedDriveTrainPose),
                         new VisionIOPhotonVisionSim(
                                 camera1Name, robotToCamera1, driveSimulation::getSimulatedDriveTrainPose));
+                climb = new Climb(new ClimbIO() {
+                    @Override
+                    public void updateInputs(ClimbInputs inputs) {}
+                });
                 break;
 
             default:
@@ -114,6 +123,10 @@ public class RobotContainer {
                         new ModuleIO() {},
                         (robotPose) -> {});
                 vision = new Vision(drive, new VisionIO() {}, new VisionIO() {});
+                climb = new Climb(new ClimbIO() {
+                    @Override
+                    public void updateInputs(ClimbInputs inputs) {}
+                });
                 break;
         }
 
@@ -223,9 +236,14 @@ public class RobotContainer {
                 .whileTrue(arm.intakeCommand())
                 .onFalse(arm.intakeIdleCommand());
 
-        // Keep manual arm position controls on driver controller only.
-        controller.povDown().onTrue(arm.armDroppingCommand());
-        controller.povUp().onTrue(arm.armUprightCommand());
+        controller
+                // Hold POV up: climb moves upward, release to stop.
+                .povUp()
+                .whileTrue(climb.manualUpCommand());
+        controller
+                // Hold POV down: climb moves downward, release to stop.
+                .povDown()
+                .whileTrue(climb.manualDownCommand());
     }
 
     /**
