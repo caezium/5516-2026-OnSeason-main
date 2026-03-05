@@ -14,10 +14,12 @@
 package frc.robot;
 
 import static edu.wpi.first.units.Units.*;
+import static frc.robot.subsystems.arm.ArmConstants.*;
 import static frc.robot.subsystems.shooter.ShooterContants.*;
 import static frc.robot.subsystems.vision.VisionConstants.*;
 
 import com.pathplanner.lib.auto.AutoBuilder;
+import com.pathplanner.lib.auto.NamedCommands;
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.wpilibj.GenericHID;
@@ -48,6 +50,8 @@ import org.littletonrobotics.junction.networktables.LoggedDashboardChooser;
  * Instead, the structure of the robot (including subsystems, commands, and button mappings) should be declared here.
  */
 public class RobotContainer {
+    private static final double AUTO_SHOOT_TIMEOUT_SECS = 2.0;
+
     // Subsystems
     private final Vision vision;
     private final Drive drive;
@@ -62,6 +66,10 @@ public class RobotContainer {
 
     // Dashboard inputs
     private final LoggedDashboardChooser<Command> autoChooser;
+
+    // Cached commands for PathPlanner named events
+    private Command intakeHoldCommand;
+    private Command intakeOnlyCommand;
 
     /** The container for the robot. Contains subsystems, OI devices, and commands. */
     public RobotContainer() {
@@ -119,6 +127,8 @@ public class RobotContainer {
 
         shooter = new Shooter(new ShooterIOReal());
         arm = new Arm(new ArmIOReal());
+
+        registerPathPlannerNamedCommands();
 
         // Set up auto routines
         autoChooser = new LoggedDashboardChooser<>("Auto Choices", AutoBuilder.buildAutoChooser());
@@ -228,13 +238,42 @@ public class RobotContainer {
         controller.povUp().onTrue(arm.armUprightCommand());
     }
 
+    private void registerPathPlannerNamedCommands() {
+        intakeHoldCommand = arm.holdIntakePositionAndRunIntake();
+        intakeOnlyCommand = arm.intakeCommand();
+
+        NamedCommands.registerCommand("deploy", Commands.runOnce(() -> arm.requestPosition(ARM_INTAKING_ANGLE), arm));
+        NamedCommands.registerCommand("start intake", Commands.runOnce(() -> intakeOnlyCommand.schedule()));
+        NamedCommands.registerCommand(
+                "deploy and start intake", Commands.runOnce(() -> intakeHoldCommand.schedule()));
+        NamedCommands.registerCommand("Stop intake", Commands.runOnce(this::stopIntakeCommands));
+
+        DoubleSupplier shooterVelocitySupplier = () -> SmartDashboard.getNumber("Shooter Velocity (RPM)", -2800.0);
+        NamedCommands.registerCommand(
+                "shoot",
+                shooter.runShooterThenFeeder(
+                                shooterVelocitySupplier, FEEDER_SHOOT_RPM, SHOOTER_READY_TOLERANCE_RPM)
+                        .withTimeout(AUTO_SHOOT_TIMEOUT_SECS)
+                        .andThen(Commands.runOnce(() -> shooter.stopAllShooterMotors().schedule())));
+    }
+
     /**
      * Use this to pass the autonomous command to the main {@link Robot} class.
      *
      * @return the command to run in autonomous
      */
     public Command getAutonomousCommand() {
-        return autoChooser.get();
+        return autoChooser.get().andThen(Commands.runOnce(this::stopIntakeCommands));
+    }
+
+    public void stopIntakeCommands() {
+        if (intakeHoldCommand != null) {
+            intakeHoldCommand.cancel();
+        }
+        if (intakeOnlyCommand != null) {
+            intakeOnlyCommand.cancel();
+        }
+        arm.intakeIdleCommand().withTimeout(0.1).schedule();
     }
 
     public void resetSimulation() {
