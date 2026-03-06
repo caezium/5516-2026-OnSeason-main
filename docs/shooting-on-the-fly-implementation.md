@@ -1,48 +1,9 @@
-# Shooting on the Fly: 3 Implementation Plans
+# Shooting on the Fly
 
 This document outlines three implementation paths for "shooting on the fly" (SOTF). All plans assume **no turret** and a **fast swerve drivetrain**, so the robot must actively control **heading** while moving. Each plan increases in complexity and performance.
 
----
 
-## Plan A - Minimal Viable SOTF (Heading-Only + Empirical Shooter Map)
-
-**Goal:** Get reliable on-the-fly shooting quickly using only heading control and a distance-based shooter map.
-
-**Core idea:**
-- Use odometry/vision target position to compute a desired **robot heading** to the goal.
-- Use existing drive heading controllers to rotate the chassis while still allowing translation.
-- Use a **distance-to-RPM/arm-angle map** (interpolated table) instead of physics.
-
-**Implementation steps:**
-1. **Target selection:** use fixed field target position (or vision hub position) to compute bearing.
-2. **Heading control:** call `DriveCommands.joystickDriveAtAngle(...)` with the target bearing.
-3. **Shooter map:** create a lookup table (distance -> shooter RPM and arm angle).
-4. **Shot gating:** only allow feeding when:
-   - heading error < threshold
-   - shooter RPM within tolerance
-   - arm angle within tolerance
-
-**Why it fits the current repo:**
-- Drive heading control already exists.
-- Shooter subsystem already accepts RPM commands.
-- Requires minimal new math.
-
-**Pros:**
-- Fast to build and tune.
-- Low risk.
-- Good enough for moderate speed shots.
-
-**Cons:**
-- No velocity compensation; accuracy degrades at higher speeds.
-- Requires more strict speed limits while shooting.
-
-**When to choose:**
-- You need a fast, reliable baseline.
-- You can slow down slightly during shots.
-
----
-
-## Plan B - FTC-Style Moving Shot Solver (Velocity-Compensated Heading)
+## Plan -  Moving Shot Solver (Velocity-Compensated Heading)
 
 **Goal:** Port the FTC moving-shot model to FRC and compensate for robot velocity to improve accuracy while moving.
 
@@ -73,44 +34,6 @@ This document outlines three implementation paths for "shooting on the fly" (SOT
 - You want reliable shots without slowing the robot.
 - You can invest time in tuning and validation.
 
----
-
-## Plan C - Predictive SOTF with Vision Fusion + Time-of-Flight
-
-**Goal:** Best-possible accuracy while moving fast, using vision + odometry fusion and predictive timing.
-
-**Core idea:**
-- Fuse pose from odometry + AprilTag vision for best target alignment.
-- Predict robot pose at **shot exit time** (includes shooter spin-up + ball flight time).
-- Use solver to aim at **predicted pose**, not current pose.
-- Optionally gate shots when the robot is within a velocity/accel envelope.
-
-**Implementation steps:**
-1. **Pose fusion:** use Vision's target position if visible, else fall back to odometry.
-2. **Time-of-flight prediction:** compute ball flight time + feeder/exit delay.
-3. **Predictive heading:** aim at target based on predicted robot pose.
-4. **Dynamic shot gating:** allow shot only when heading error + predicted error are within limits.
-5. **Auto tuning hooks:** log all predicted vs. actual error for offline tuning.
-
-**Pros:**
-- Highest accuracy at speed.
-- Strongest resilience to vision dropout.
-
-**Cons:**
-- Most complex to implement and tune.
-- More dependence on accurate timing and model parameters.
-
-**When to choose:**
-- You need max performance late season.
-- You already have stable vision + odometry.
-
----
-
-## Suggested Decision Path
-
-1. Start with **Plan A** to validate shooter map, gating logic, and driver workflow.
-2. Upgrade to **Plan B** once basic SOTF is stable.
-3. If required by game demands, move to **Plan C** for max performance.
 
 ---
 
@@ -131,7 +54,7 @@ This document outlines three implementation paths for "shooting on the fly" (SOT
 - Confirm odometry drift stays within your shot tolerance.
 - Log chassis speed vs. commanded speed at multiple drive speeds.
 
-**Velocity compensation (Plan B/C)**
+**Velocity compensation**
 - Test straight-line shots at multiple speeds (forward/backward).
 - Test strafing shots (left/right) for tangential lead correctness.
 - Tune heading controller gains for fast but stable alignment.

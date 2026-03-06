@@ -22,11 +22,15 @@ import com.pathplanner.lib.auto.AutoBuilder;
 import com.pathplanner.lib.auto.NamedCommands;
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
+import edu.wpi.first.math.geometry.Translation2d;
+import edu.wpi.first.wpilibj.DriverStation;
+import edu.wpi.first.wpilibj.DriverStation.Alliance;
 import edu.wpi.first.wpilibj.GenericHID;
 import edu.wpi.first.wpilibj.XboxController;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.Commands;
+import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
 import edu.wpi.first.wpilibj2.command.button.Trigger;
 import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine;
 import frc.robot.commands.DriveCommands;
@@ -34,6 +38,9 @@ import frc.robot.commands.drive.HubAlignmentCommands;
 import frc.robot.generated.TunerConstants;
 import frc.robot.subsystems.arm.Arm;
 import frc.robot.subsystems.arm.ArmIOReal;
+import frc.robot.subsystems.climb.Climb;
+import frc.robot.subsystems.climb.ClimbIO;
+import frc.robot.subsystems.climb.ClimbIOReal;
 import frc.robot.subsystems.drive.*;
 import frc.robot.subsystems.shooter.Shooter;
 import frc.robot.subsystems.shooter.ShooterIOReal;
@@ -59,13 +66,19 @@ public class RobotContainer {
 
     public Shooter shooter;
     public Arm arm;
+    public Climb climb;
 
     // Controller
-    //     private final CommandXboxController controller = new CommandXboxController(0);
+    // private final CommandXboxController controller = new CommandXboxController(0);
     public final DriverMap controller = new DriverMap.LeftHandedXbox(0);
+    /** Copilot controller, only used for entering climb vision calibration with X button. */
+    public final CommandXboxController copilotController = new CommandXboxController(1);
 
     // Dashboard inputs
     private final LoggedDashboardChooser<Command> autoChooser;
+    private SotfAimMode currentSotfAimMode = SotfAimMode.SOTF_AUTO;
+    /** Latches true after copilot presses X to arm climb vision calibration mode. */
+    private boolean climbVisionCalibrationArmed = false;
 
     // Cached commands for PathPlanner named events
     private Command intakeHoldCommand;
@@ -87,8 +100,9 @@ public class RobotContainer {
                 vision = new Vision(
                         drive,
                         new VisionIOPhotonVision(VisionConstants.camera0Name, VisionConstants.robotToCamera0),
-                        new VisionIOPhotonVision(VisionConstants.camera1Name, VisionConstants.robotToCamera1));                   
+                        new VisionIOPhotonVision(VisionConstants.camera1Name, VisionConstants.robotToCamera1));
                 arm = new Arm(new ArmIOReal());
+                climb = new Climb(new ClimbIOReal());
                 break;
 
             case SIM:
@@ -110,6 +124,10 @@ public class RobotContainer {
                                 camera0Name, robotToCamera0, driveSimulation::getSimulatedDriveTrainPose),
                         new VisionIOPhotonVisionSim(
                                 camera1Name, robotToCamera1, driveSimulation::getSimulatedDriveTrainPose));
+                climb = new Climb(new ClimbIO() {
+                    @Override
+                    public void updateInputs(ClimbInputs inputs) {}
+                });
                 break;
 
             default:
@@ -122,6 +140,10 @@ public class RobotContainer {
                         new ModuleIO() {},
                         (robotPose) -> {});
                 vision = new Vision(drive, new VisionIO() {}, new VisionIO() {});
+                climb = new Climb(new ClimbIO() {
+                    @Override
+                    public void updateInputs(ClimbInputs inputs) {}
+                });
                 break;
         }
 
@@ -164,11 +186,24 @@ public class RobotContainer {
                 "Disable Motor Brake",
                 Commands.runOnce(() -> setMotorBrake(false)).ignoringDisable(true));
 
-        drive.setDefaultCommand(DriveCommands.joystickDrive(
+        // Keep one single driving workflow for the driver in both modes.
+        // Auto-aim only adds heading assistance and does not replace the base control scheme.
+        drive.setDefaultCommand(DriveCommands.joystickDriveWithOptionalAutoAim(
                 drive,
                 () -> controller.translationalAxisY().getAsDouble(),
                 () -> controller.translationalAxisX().getAsDouble(),
-                () -> -controller.rotationalAxisX().getAsDouble()));
+                () -> -controller.rotationalAxisX().getAsDouble(),
+                this::shouldRunTeleopAutoAim,
+                this::getAutoAimTargetRotation));
+
+        // Operator mode selection:
+        // A => enable SOTF auto-aim mode
+        // B => force pure manual aiming mode
+        controller.enableSotfAutoAimButton().onTrue(Commands.runOnce(() -> currentSotfAimMode = SotfAimMode.SOTF_AUTO));
+        controller.enableManualAimButton().onTrue(Commands.runOnce(() -> currentSotfAimMode = SotfAimMode.MANUAL));
+        // Copilot X: enter climb vision calibration mode.
+        // Calibration will only activate when one of tags {15, 16, 31, 32} becomes visible.
+        copilotController.x().onTrue(Commands.runOnce(() -> climbVisionCalibrationArmed = true));
 
         // Lock to 0° when A button is held
         // controller
@@ -233,9 +268,14 @@ public class RobotContainer {
                 .whileTrue(arm.intakeCommand())
                 .onFalse(arm.intakeIdleCommand());
 
-        // Keep manual arm position controls on driver controller only.
-        controller.povDown().onTrue(arm.armDroppingCommand());
-        controller.povUp().onTrue(arm.armUprightCommand());
+        controller
+                // Hold POV up: climb moves upward, release to stop.
+                .povUp()
+                .whileTrue(climb.manualUpCommand());
+        controller
+                // Hold POV down: climb moves downward, release to stop.
+                .povDown()
+                .whileTrue(climb.manualDownCommand());
     }
 
     private void registerPathPlannerNamedCommands() {
@@ -292,6 +332,96 @@ public class RobotContainer {
     }
 
     private boolean motorBrakeEnabled = false;
+
+    private boolean isRedAlliance() {
+        return DriverStation.getAlliance().isPresent()
+                && DriverStation.getAlliance().get() == Alliance.Red;
+    }
+
+    private Translation2d getAllianceFallbackTarget() {
+        if (isRedAlliance()) {
+            return new Translation2d(
+                    16.54 - DriveCommands.BLUE_TARGET_POSITION.getX(), DriveCommands.BLUE_TARGET_POSITION.getY());
+        }
+        return DriveCommands.BLUE_TARGET_POSITION;
+    }
+
+    /**
+     * Returns the heading target for teleop auto-aim.
+     *
+     * <p>If climb vision calibration is active, face the nearest visible climb alignment tag. Otherwise use existing
+     * SOTF hub target logic.
+     */
+    private Rotation2d getAutoAimTargetRotation() {
+        Translation2d targetPosition = isClimbVisionCalibrationActive()
+                ? getVisibleClimbAlignmentTagPosition().orElseGet(this::getAllianceFallbackTarget)
+                : vision.getVisibleHubPosition(isRedAlliance()).orElseGet(this::getAllianceFallbackTarget);
+        Translation2d robotPosition = drive.getPose().getTranslation();
+        Translation2d delta = targetPosition.minus(robotPosition);
+        return new Rotation2d(Math.atan2(delta.getY(), delta.getX()));
+    }
+
+    /**
+     * Finds the nearest visible climb alignment AprilTag position from the whitelist.
+     *
+     * @return Optional nearest tag position on field if visible
+     */
+    private java.util.Optional<Translation2d> getVisibleClimbAlignmentTagPosition() {
+        Translation2d robotPosition = drive.getPose().getTranslation();
+        Translation2d bestPosition = null;
+        double bestDistanceMeters = Double.POSITIVE_INFINITY;
+
+        for (int tagId : CLIMB_ALIGNMENT_TAG_WHITELIST) {
+            var tagPose = vision.getTagPose(tagId);
+            if (tagPose.isEmpty()) {
+                continue;
+            }
+
+            Translation2d tagPosition = tagPose.get().toPose2d().getTranslation();
+            double distanceMeters = tagPosition.getDistance(robotPosition);
+            if (distanceMeters < bestDistanceMeters) {
+                bestDistanceMeters = distanceMeters;
+                bestPosition = tagPosition;
+            }
+        }
+
+        return bestPosition == null ? java.util.Optional.empty() : java.util.Optional.of(bestPosition);
+    }
+
+    /** Returns true when copilot has armed climb vision calibration and a climb alignment tag is currently visible. */
+    private boolean isClimbVisionCalibrationActive() {
+        return climbVisionCalibrationArmed
+                && getVisibleClimbAlignmentTagPosition().isPresent();
+    }
+
+    /**
+     * Unified teleop auto-aim gate.
+     *
+     * <p>Behavior:
+     *
+     * <p>1) When climb vision calibration is armed, only climb-tag calibration can activate auto-aim.
+     *
+     * <p>2) Otherwise preserve the original SOTF auto-aim behavior.
+     */
+    private boolean shouldRunTeleopAutoAim() {
+        boolean climbTagVisible = getVisibleClimbAlignmentTagPosition().isPresent();
+        boolean climbCalibrationActive = climbVisionCalibrationArmed && climbTagVisible;
+
+        boolean sotfAutoModeEnabled = currentSotfAimMode == SotfAimMode.SOTF_AUTO;
+        boolean sotfHasWhitelistedTag = vision.hasSotfTarget();
+        boolean sotfAutoAimActive = !climbVisionCalibrationArmed && sotfAutoModeEnabled && sotfHasWhitelistedTag;
+
+        Logger.recordOutput("SOTF/Mode", currentSotfAimMode.toString());
+        Logger.recordOutput("SOTF/AutoModeEnabled", sotfAutoModeEnabled);
+        Logger.recordOutput("SOTF/HasWhitelistedTag", sotfHasWhitelistedTag);
+        Logger.recordOutput("SOTF/AutoAimActive", sotfAutoAimActive);
+        Logger.recordOutput("ClimbVision/Armed", climbVisionCalibrationArmed);
+        Logger.recordOutput("ClimbVision/TagVisible", climbTagVisible);
+        Logger.recordOutput("ClimbVision/AutoCalibrationActive", climbCalibrationActive);
+        Logger.recordOutput("ClimbVision/WhitelistedTagIds", CLIMB_ALIGNMENT_TAG_WHITELIST);
+
+        return climbCalibrationActive || sotfAutoAimActive;
+    }
 
     public void setMotorBrake(boolean brakeModeEnable) {
         if (this.motorBrakeEnabled == brakeModeEnable) return;
