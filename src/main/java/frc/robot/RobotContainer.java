@@ -28,6 +28,7 @@ import edu.wpi.first.wpilibj.XboxController;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.Commands;
+import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
 import edu.wpi.first.wpilibj2.command.button.Trigger;
 import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine;
 import frc.robot.commands.DriveCommands;
@@ -54,6 +55,9 @@ import org.littletonrobotics.junction.networktables.LoggedDashboardChooser;
  * Instead, the structure of the robot (including subsystems, commands, and button mappings) should be declared here.
  */
 public class RobotContainer {
+    /** Climb alignment tags that can trigger vision calibration mode. */
+    private static final int[] CLIMB_ALIGNMENT_TAG_WHITELIST = new int[] {15, 16, 31, 32};
+
     private enum SotfAimMode {
         SOTF_AUTO,
         MANUAL
@@ -71,10 +75,14 @@ public class RobotContainer {
     // Controller
     //     private final CommandXboxController controller = new CommandXboxController(0);
     public final DriverMap controller = new DriverMap.LeftHandedXbox(0);
+    /** Copilot controller, only used for entering climb vision calibration with X button. */
+    public final CommandXboxController copilotController = new CommandXboxController(1);
 
     // Dashboard inputs
     private final LoggedDashboardChooser<Command> autoChooser;
     private SotfAimMode currentSotfAimMode = SotfAimMode.SOTF_AUTO;
+    /** Latches true after copilot presses X to arm climb vision calibration mode. */
+    private boolean climbVisionCalibrationArmed = false;
 
     /** The container for the robot. Contains subsystems, OI devices, and commands. */
     public RobotContainer() {
@@ -183,20 +191,17 @@ public class RobotContainer {
                 () -> controller.translationalAxisY().getAsDouble(),
                 () -> controller.translationalAxisX().getAsDouble(),
                 () -> -controller.rotationalAxisX().getAsDouble(),
-                this::shouldRunSotfAutoAim,
-                () -> {
-                    Translation2d targetPosition =
-                            vision.getVisibleHubPosition(isRedAlliance()).orElseGet(this::getAllianceFallbackTarget);
-                    Translation2d robotPosition = drive.getPose().getTranslation();
-                    Translation2d delta = targetPosition.minus(robotPosition);
-                    return new Rotation2d(Math.atan2(delta.getY(), delta.getX()));
-                }));
+                this::shouldRunTeleopAutoAim,
+                this::getAutoAimTargetRotation));
 
         // Operator mode selection:
         // A => enable SOTF auto-aim mode
         // B => force pure manual aiming mode
         controller.enableSotfAutoAimButton().onTrue(Commands.runOnce(() -> currentSotfAimMode = SotfAimMode.SOTF_AUTO));
         controller.enableManualAimButton().onTrue(Commands.runOnce(() -> currentSotfAimMode = SotfAimMode.MANUAL));
+        // Copilot X: enter climb vision calibration mode.
+        // Calibration will only activate when one of tags {15, 16, 31, 32} becomes visible.
+        copilotController.x().onTrue(Commands.runOnce(() -> climbVisionCalibrationArmed = true));
 
         // Lock to 0° when A button is held
         // controller
@@ -310,17 +315,81 @@ public class RobotContainer {
         return DriveCommands.BLUE_TARGET_POSITION;
     }
 
-    private boolean shouldRunSotfAutoAim() {
-        boolean autoModeEnabled = currentSotfAimMode == SotfAimMode.SOTF_AUTO;
-        boolean hasWhitelistedTag = vision.hasSotfTarget();
-        boolean autoAimActive = autoModeEnabled && hasWhitelistedTag;
+    /**
+     * Returns the heading target for teleop auto-aim.
+     *
+     * <p>If climb vision calibration is active, face the nearest visible climb alignment tag. Otherwise use existing
+     * SOTF hub target logic.
+     */
+    private Rotation2d getAutoAimTargetRotation() {
+        Translation2d targetPosition = isClimbVisionCalibrationActive()
+                ? getVisibleClimbAlignmentTagPosition().orElseGet(this::getAllianceFallbackTarget)
+                : vision.getVisibleHubPosition(isRedAlliance()).orElseGet(this::getAllianceFallbackTarget);
+        Translation2d robotPosition = drive.getPose().getTranslation();
+        Translation2d delta = targetPosition.minus(robotPosition);
+        return new Rotation2d(Math.atan2(delta.getY(), delta.getX()));
+    }
+
+    /**
+     * Finds the nearest visible climb alignment AprilTag position from the whitelist.
+     *
+     * @return Optional nearest tag position on field if visible
+     */
+    private java.util.Optional<Translation2d> getVisibleClimbAlignmentTagPosition() {
+        Translation2d robotPosition = drive.getPose().getTranslation();
+        Translation2d bestPosition = null;
+        double bestDistanceMeters = Double.POSITIVE_INFINITY;
+
+        for (int tagId : CLIMB_ALIGNMENT_TAG_WHITELIST) {
+            var tagPose = vision.getTagPose(tagId);
+            if (tagPose.isEmpty()) {
+                continue;
+            }
+
+            Translation2d tagPosition = tagPose.get().toPose2d().getTranslation();
+            double distanceMeters = tagPosition.getDistance(robotPosition);
+            if (distanceMeters < bestDistanceMeters) {
+                bestDistanceMeters = distanceMeters;
+                bestPosition = tagPosition;
+            }
+        }
+
+        return bestPosition == null ? java.util.Optional.empty() : java.util.Optional.of(bestPosition);
+    }
+
+    /** Returns true when copilot has armed climb vision calibration and a climb alignment tag is currently visible. */
+    private boolean isClimbVisionCalibrationActive() {
+        return climbVisionCalibrationArmed
+                && getVisibleClimbAlignmentTagPosition().isPresent();
+    }
+
+    /**
+     * Unified teleop auto-aim gate.
+     *
+     * <p>Behavior:
+     *
+     * <p>1) When climb vision calibration is armed, only climb-tag calibration can activate auto-aim.
+     *
+     * <p>2) Otherwise preserve the original SOTF auto-aim behavior.
+     */
+    private boolean shouldRunTeleopAutoAim() {
+        boolean climbTagVisible = getVisibleClimbAlignmentTagPosition().isPresent();
+        boolean climbCalibrationActive = climbVisionCalibrationArmed && climbTagVisible;
+
+        boolean sotfAutoModeEnabled = currentSotfAimMode == SotfAimMode.SOTF_AUTO;
+        boolean sotfHasWhitelistedTag = vision.hasSotfTarget();
+        boolean sotfAutoAimActive = !climbVisionCalibrationArmed && sotfAutoModeEnabled && sotfHasWhitelistedTag;
 
         Logger.recordOutput("SOTF/Mode", currentSotfAimMode.toString());
-        Logger.recordOutput("SOTF/AutoModeEnabled", autoModeEnabled);
-        Logger.recordOutput("SOTF/HasWhitelistedTag", hasWhitelistedTag);
-        Logger.recordOutput("SOTF/AutoAimActive", autoAimActive);
+        Logger.recordOutput("SOTF/AutoModeEnabled", sotfAutoModeEnabled);
+        Logger.recordOutput("SOTF/HasWhitelistedTag", sotfHasWhitelistedTag);
+        Logger.recordOutput("SOTF/AutoAimActive", sotfAutoAimActive);
+        Logger.recordOutput("ClimbVision/Armed", climbVisionCalibrationArmed);
+        Logger.recordOutput("ClimbVision/TagVisible", climbTagVisible);
+        Logger.recordOutput("ClimbVision/AutoCalibrationActive", climbCalibrationActive);
+        Logger.recordOutput("ClimbVision/WhitelistedTagIds", CLIMB_ALIGNMENT_TAG_WHITELIST);
 
-        return autoAimActive;
+        return climbCalibrationActive || sotfAutoAimActive;
     }
 
     public void setMotorBrake(boolean brakeModeEnable) {
