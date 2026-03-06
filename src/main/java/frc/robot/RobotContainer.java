@@ -74,7 +74,7 @@ public class RobotContainer {
 
     // Controller
     //     private final CommandXboxController controller = new CommandXboxController(0);
-    public final DriverMap controller = new DriverMap.LeftHandedXbox(0);
+    public final DriverMap controller = new DriverMap.LeftHandedPS5(0);
     /** Copilot controller, only used for entering climb vision calibration with X button. */
     public final CommandXboxController copilotController = new CommandXboxController(1);
 
